@@ -1,5 +1,4 @@
 package main
-
 import (
 	"bufio"
 	"context"
@@ -107,33 +106,7 @@ func NewLogger() (*audiotypes.Logger, error) {
 		Encoder: json.NewEncoder(file),
 	}, nil
 }
-func XNewLogger() (*Logger, error) {
-	exePath, err := os.Executable()
-	if err != nil {
-		return nil, fmt.Errorf("get executable path: %w", err)
-	}
-	exeDir := filepath.Dir(exePath)
 
-	logDir := filepath.Join(exeDir, "logs")
-	if err := os.MkdirAll(logDir, 0755); err != nil {
-		return nil, fmt.Errorf("create log directory: %w", err)
-	}
-
-	timestamp := time.Now().Format("20060102_150405")
-	filename := filepath.Join(logDir, fmt.Sprintf("Chat:%s.log", timestamp))
-
-	file, err := os.Create(filename)
-	if err != nil {
-		return nil, fmt.Errorf("create log file: %w", err)
-	}
-
-	log.Printf("Logging to: %s", filename)
-	baseLogger := &audiotypes.Logger{
-		File:    file,
-		Encoder: json.NewEncoder(file),
-	}
-	return &Logger{Logger: baseLogger}, nil
-}
 func (l *Logger) Log(direction, msgType string, content interface{}) {
 	l.Mu.Lock()
 	defer l.Mu.Unlock()
@@ -200,50 +173,6 @@ func NewChatClient(conn *websocket.Conn, config audiotypes.ClientConfig) (*ChatC
 
     log.Printf("Chat client initialized with audio processing")
     return client, nil
-}
-func XNewChatClient(conn *websocket.Conn, config audiotypes.ClientConfig) (*ChatClient, error) {
-	logger, err := NewLogger()
-	if err != nil {
-		return nil, fmt.Errorf("create logger: %w", err)
-	}
-
-	// Ensure audio directory exists
-	audioDir := filepath.Join(config.AudioOutputDir)
-	if err := os.MkdirAll(audioDir, 0755); err != nil {
-		return nil, fmt.Errorf("create audio directory: %w", err)
-	}
-	log.Printf("Audio directory initialized: %s", audioDir)
-
-	// Setup ping handler
-	conn.SetPingHandler(func(appData string) error {
-		return conn.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(time.Second))
-	})
-
-	baseClient := &audiotypes.ChatClient{
-		Conn:           conn,
-		MessageChannel: make(chan string, 1),
-		DisplayChannel: make(chan audiotypes.ChatMessage),
-		AudioChannel:   make(chan audiotypes.AudioChunk, 100),
-		Done:           make(chan struct{}),
-		Logger:         logger,
-		Config:         config,
-		Metrics:        &audiotypes.Metrics{},
-		AudioBuffer:    make(map[string]*audiotypes.AudioMessage),
-		WG:             sync.WaitGroup{},
-		ShutdownOnce:   sync.Once{},
-		AudioMutex:     sync.Mutex{},
-	}
-
-	client := &ChatClient{
-		ChatClient: baseClient,
-	}
-
-	// Start audio processing routine
-	client.WG.Add(1)
-	go client.audioProcessingRoutine()
-
-	log.Printf("Chat client initialized with audio processing")
-	return client, nil
 }
 
 func (c *ChatClient) audioProcessingRoutine() {
