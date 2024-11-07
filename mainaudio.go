@@ -1,4 +1,5 @@
 package main
+
 import (
 	"bufio"
 	"context"
@@ -13,8 +14,8 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
-        "sync"
 	"strings"
+	"sync"
 	"time"
 
 	"geppetoaudio/audiotypes"
@@ -33,16 +34,17 @@ type Logger struct {
 //NEW
 
 func DefaultConfig() audiotypes.ClientConfig {
-    return audiotypes.ClientConfig{
-        ReadTimeout:     45 * time.Second,  // Increased from 30
-        WriteTimeout:    30 * time.Second,  // Increased from 10
-        PingInterval:    20 * time.Second,  // Decreased from 30
-        MaxRetries:      3,
-        BufferSize:      100,
-        ShutdownTimeout: 5 * time.Second,
-        AudioOutputDir:  "audio_output",
-    }
+	return audiotypes.ClientConfig{
+		ReadTimeout:     90 * time.Second, // Increased from 30
+		WriteTimeout:    30 * time.Second, // Increased from 10
+		PingInterval:    20 * time.Second, // Decreased from 30
+		MaxRetries:      3,
+		BufferSize:      100,
+		ShutdownTimeout: 5 * time.Second,
+		AudioOutputDir:  "audio_output",
+	}
 }
+
 //OLD
 
 func (c *ChatClient) saveTranscript(filepath string, transcript string) error {
@@ -131,48 +133,48 @@ func (l *Logger) Close() error {
 // NewChatClient
 
 func NewChatClient(conn *websocket.Conn, config audiotypes.ClientConfig) (*ChatClient, error) {
-    logger, err := NewLogger()
-    if err != nil {
-        return nil, fmt.Errorf("create logger: %w", err)
-    }
+	logger, err := NewLogger()
+	if err != nil {
+		return nil, fmt.Errorf("create logger: %w", err)
+	}
 
-    // Ensure audio directory exists
-    audioDir := filepath.Join(config.AudioOutputDir)
-    if err := os.MkdirAll(audioDir, 0755); err != nil {
-        return nil, fmt.Errorf("create audio directory: %w", err)
-    }
-    log.Printf("Audio directory initialized: %s", audioDir)
+	// Ensure audio directory exists
+	audioDir := filepath.Join(config.AudioOutputDir)
+	if err := os.MkdirAll(audioDir, 0755); err != nil {
+		return nil, fmt.Errorf("create audio directory: %w", err)
+	}
+	log.Printf("Audio directory initialized: %s", audioDir)
 
-    // Setup ping handler
-    conn.SetPingHandler(func(appData string) error {
-        return conn.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(time.Second))
-    })
+	// Setup ping handler
+	conn.SetPingHandler(func(appData string) error {
+		return conn.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(time.Second))
+	})
 
-    baseClient := &audiotypes.ChatClient{
-        Conn:           conn,
-        MessageChannel: make(chan string, 1),
-        DisplayChannel: make(chan audiotypes.ChatMessage),
-        AudioChannel:   make(chan audiotypes.AudioChunk, 100),
-        Done:           make(chan struct{}),
-        Logger:         logger,         // Use logger directly, not logger.Logger
-        Config:         config,
-        Metrics:        &audiotypes.Metrics{},
-        AudioBuffer:    make(map[string]*audiotypes.AudioMessage),
-        WG:            sync.WaitGroup{},
-        ShutdownOnce:  sync.Once{},
-        AudioMutex:    sync.Mutex{},
-    }
+	baseClient := &audiotypes.ChatClient{
+		Conn:           conn,
+		MessageChannel: make(chan string, 1),
+		DisplayChannel: make(chan audiotypes.ChatMessage),
+		AudioChannel:   make(chan audiotypes.AudioChunk, 100),
+		Done:           make(chan struct{}),
+		Logger:         logger, // Use logger directly, not logger.Logger
+		Config:         config,
+		Metrics:        &audiotypes.Metrics{},
+		AudioBuffer:    make(map[string]*audiotypes.AudioMessage),
+		WG:             sync.WaitGroup{},
+		ShutdownOnce:   sync.Once{},
+		AudioMutex:     sync.Mutex{},
+	}
 
-    client := &ChatClient{
-        ChatClient: baseClient,
-    }
+	client := &ChatClient{
+		ChatClient: baseClient,
+	}
 
-    // Start audio processing routine
-    client.WG.Add(1)
-    go client.audioProcessingRoutine()
+	// Start audio processing routine
+	client.WG.Add(1)
+	go client.audioProcessingRoutine()
 
-    log.Printf("Chat client initialized with audio processing")
-    return client, nil
+	log.Printf("Chat client initialized with audio processing")
+	return client, nil
 }
 
 func (c *ChatClient) audioProcessingRoutine() {
@@ -326,129 +328,131 @@ func (c *ChatClient) writeWAVHeader(file io.Writer, dataSize uint32) error {
 	}
 	return nil
 }
-//NEW KEEP ALIVE
+
+// NEW KEEP ALIVE
 func (c *ChatClient) keepAliveRoutine() {
-    ticker := time.NewTicker(c.Config.PingInterval)
-    defer ticker.Stop()
-    defer c.WG.Done()
+	ticker := time.NewTicker(c.Config.PingInterval)
+	defer ticker.Stop()
+	defer c.WG.Done()
 
-    for {
-        select {
-        case <-ticker.C:
-            if err := c.Conn.WriteControl(
-                websocket.PingMessage,
-                []byte{},
-                time.Now().Add(c.Config.WriteTimeout),
-            ); err != nil {
-                log.Printf("Error sending ping: %v", err)
-                return
-            }
-        case <-c.Done:
-            return
-        }
-    }
+	for {
+		select {
+		case <-ticker.C:
+			if err := c.Conn.WriteControl(
+				websocket.PingMessage,
+				[]byte{},
+				time.Now().Add(c.Config.WriteTimeout),
+			); err != nil {
+				log.Printf("Error sending ping: %v", err)
+				return
+			}
+		case <-c.Done:
+			return
+		}
+	}
 }
-//NEW
+
+// NEW
 func (c *ChatClient) receiveRoutine() {
-    defer c.WG.Done()
-    var audioFiles = make(map[string]string) // Map to store audio file paths by responseID_itemID
+	defer c.WG.Done()
+	var audioFiles = make(map[string]string) // Map to store audio file paths by responseID_itemID
 
-    for {
-        select {
-        case <-c.Done:
-            return
-        default:
-            c.Conn.SetReadDeadline(time.Now().Add(c.Config.ReadTimeout))
-            _, message, err := c.Conn.ReadMessage()
-            if err != nil {
-                if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
-                    return
-                }
-                if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-                    continue
-                }
-                log.Printf("Read error: %v", err)
-                c.Metrics.RecordError()
-                if websocket.IsUnexpectedCloseError(err) {
-                    c.shutdown()
-                    return
-                }
-                continue
-            }
+	for {
+		select {
+		case <-c.Done:
+			return
+		default:
+			c.Conn.SetReadDeadline(time.Now().Add(c.Config.ReadTimeout))
+			_, message, err := c.Conn.ReadMessage()
+			if err != nil {
+				if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+					return
+				}
+				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+					continue
+				}
+				log.Printf("Read error: %v", err)
+				c.Metrics.RecordError()
+				if websocket.IsUnexpectedCloseError(err) {
+					c.shutdown()
+					return
+				}
+				continue
+			}
 
-            // Reset read deadline after successful read
-            c.Conn.SetReadDeadline(time.Time{})
+			// Reset read deadline after successful read
+			c.Conn.SetReadDeadline(time.Time{})
 
-            var baseMessage struct {
-                Type string `json:"type"`
-            }
-            if err := json.Unmarshal(message, &baseMessage); err != nil {
-                continue
-            }
+			var baseMessage struct {
+				Type string `json:"type"`
+			}
+			if err := json.Unmarshal(message, &baseMessage); err != nil {
+				continue
+			}
 
-            // Log raw message
-            var rawJSON interface{}
-            if err := json.Unmarshal(message, &rawJSON); err == nil {
-                c.Logger.Log("received", baseMessage.Type, rawJSON)
-            }
+			// Log raw message
+			var rawJSON interface{}
+			if err := json.Unmarshal(message, &rawJSON); err == nil {
+				c.Logger.Log("received", baseMessage.Type, rawJSON)
+			}
 
-            switch baseMessage.Type {
-            case "response.audio.delta":
-                if err := c.handleAudioResponse(message); err != nil {
-                    log.Printf("Error handling audio response: %v", err)
-                }
+			switch baseMessage.Type {
+			case "response.audio.delta":
+				if err := c.handleAudioResponse(message); err != nil {
+					log.Printf("Error handling audio response: %v", err)
+				}
 
-            case "response.audio.done":
-                var doneMsg struct {
-                    ResponseID string `json:"response_id"`
-                    ItemID     string `json:"item_id"`
-                }
-                if err := json.Unmarshal(message, &doneMsg); err != nil {
-                    log.Printf("Error unmarshaling audio done message: %v", err)
-                    continue
-                }
+			case "response.audio.done":
+				var doneMsg struct {
+					ResponseID string `json:"response_id"`
+					ItemID     string `json:"item_id"`
+				}
+				if err := json.Unmarshal(message, &doneMsg); err != nil {
+					log.Printf("Error unmarshaling audio done message: %v", err)
+					continue
+				}
 
-                // Save audio file without transcript
-                timestamp := time.Now().Format("20060102_150405")
-                filename := fmt.Sprintf("audio_%s.wav", timestamp)
-                filepath := filepath.Join(c.Config.AudioOutputDir, filename)
+				// Save audio file without transcript
+				timestamp := time.Now().Format("20060102_150405")
+				filename := fmt.Sprintf("audio_%s.wav", timestamp)
+				filepath := filepath.Join(c.Config.AudioOutputDir, filename)
 
-                if err := c.saveAudioOnly(doneMsg.ResponseID, doneMsg.ItemID, filepath); err != nil {
-                    log.Printf("Error saving audio: %v", err)
-                }
+				if err := c.saveAudioOnly(doneMsg.ResponseID, doneMsg.ItemID, filepath); err != nil {
+					log.Printf("Error saving audio: %v", err)
+				}
 
-                // Store the filepath for later transcript writing
-                audioKey := fmt.Sprintf("%s_%s", doneMsg.ResponseID, doneMsg.ItemID)
-                audioFiles[audioKey] = filepath
+				// Store the filepath for later transcript writing
+				audioKey := fmt.Sprintf("%s_%s", doneMsg.ResponseID, doneMsg.ItemID)
+				audioFiles[audioKey] = filepath
 
-            case "response.done":
-                var respDone audiotypes.CompleteResponse
-                if err := json.Unmarshal(message, &respDone); err != nil {
-                    log.Printf("Error unmarshaling response done message: %v", err)
-                    continue
-                }
+			case "response.done":
+				var respDone audiotypes.CompleteResponse
+				if err := json.Unmarshal(message, &respDone); err != nil {
+					log.Printf("Error unmarshaling response done message: %v", err)
+					continue
+				}
 
-                // Process the response
-                for _, output := range respDone.Response.Output {
-                    for _, content := range output.Content {
-                        if content.Type == "audio" && content.Transcript != "" {
-                            // Get the audio file path using response ID and item ID
-                            audioKey := fmt.Sprintf("%s_%s", respDone.Response.ID, output.ID)
-                            if audioPath, exists := audioFiles[audioKey]; exists {
-                                // Write the transcript
-                                if err := c.saveTranscript(audioPath, content.Transcript); err != nil {
-                                    log.Printf("Error saving transcript: %v", err)
-                                }
-                                delete(audioFiles, audioKey) // Cleanup
-                            }
-                            fmt.Printf("\nAssistant: %s\n", content.Transcript)
-                            fmt.Print("You: ")
-                        }
-                    }
-                }
-            }
-        }
-    }
+				// Process the response
+				for _, output := range respDone.Response.Output {
+					for _, content := range output.Content {
+						if content.Type == "audio" && content.Transcript != "" {
+							// Get the audio file path using response ID and item ID
+							audioKey := fmt.Sprintf("%s_%s", respDone.Response.ID, output.ID)
+							if audioPath, exists := audioFiles[audioKey]; exists {
+								// Write the transcript
+								if err := c.saveTranscript(audioPath, content.Transcript); err != nil {
+									log.Printf("Error saving transcript: %v", err)
+								}
+								delete(audioFiles, audioKey) // Cleanup
+							}
+							fmt.Printf("\nAssistant: %s\n", content.Transcript)
+							fmt.Print("You: ")
+						}
+					}
+				}
+			}
+		}
+	}
 }
 
 func (c *ChatClient) shutdown() {
@@ -494,45 +498,46 @@ func (c *ChatClient) shutdown() {
 //Start
 
 func (c *ChatClient) Start(sessionUpdate audiotypes.SessionUpdate) error {
-    defer c.shutdown()
+	defer c.shutdown()
 
-    c.Logger.Log("sent", "session.update", sessionUpdate)
-    if err := c.Conn.WriteJSON(sessionUpdate); err != nil {
-        return fmt.Errorf("write session update: %w", err)
-    }
+	c.Logger.Log("sent", "session.update", sessionUpdate)
+	if err := c.Conn.WriteJSON(sessionUpdate); err != nil {
+		return fmt.Errorf("write session update: %w", err)
+	}
 
-    c.WG.Add(1)
-    go c.receiveRoutine()
+	c.WG.Add(1)
+	go c.receiveRoutine()
 
-    reader := bufio.NewReader(os.Stdin)
-    fmt.Print("\nYou: ")
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Print("\nYou: ")
 
-    for {
-        // Read entire line including spaces
-        input, err := reader.ReadString('\n')
-        if err != nil {
-            log.Printf("Error reading input: %v", err)
-            break
-        }
+	for {
+		// Read entire line including spaces
+		input, err := reader.ReadString('\n')
+		if err != nil {
+			log.Printf("Error reading input: %v", err)
+			break
+		}
 
-        // Trim spaces and newline characters
-        input = strings.TrimSpace(input)
+		// Trim spaces and newline characters
+		input = strings.TrimSpace(input)
 
-        if input == ".quit" || input == ".exit" {
-            break
-        }
+		if input == ".quit" || input == ".exit" {
+			break
+		}
 
-        if input != "" {
-            if err := c.sendUserMessage(input); err != nil {
-                log.Printf("Error sending message: %v", err)
-                break
-            }
-            fmt.Print("You: ")
-        }
-    }
+		if input != "" {
+			if err := c.sendUserMessage(input); err != nil {
+				log.Printf("Error sending message: %v", err)
+				break
+			}
+			fmt.Print("You: ")
+		}
+	}
 
-    return nil
+	return nil
 }
+
 //OLD
 
 func (c *ChatClient) sendUserMessage(text string) error {
