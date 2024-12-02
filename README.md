@@ -1,3 +1,4 @@
+# Note: The updated version can be found in [https://github.com/rdhillbb/ozz-wiz-realtimego]
 # Geppetto Audio: High-Level Architecture Overview
 
 **Geppetto Audio** is a Golang application that interfaces with OpenAI's real-time audio API. It allows users to input questions via the command line and receive audio responses from OpenAI. The audio responses are saved as WAV files, and their transcriptions are stored in the `audio_output` directory.
